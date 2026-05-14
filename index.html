@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Notes → Airtable</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0f0f11;--surface:#18181c;--surface2:#1f1f25;--border:#2a2a32;--accent:#6c63ff;--text:#f0eff8;--text-muted:#7a7890;--text-dim:#4a4860;--success:#22c55e;--danger:#ef4444;--font-sans:'DM Sans',sans-serif;--font-mono:'DM Mono',monospace}
+body{background:var(--bg);color:var(--text);font-family:var(--font-sans);font-size:14px;line-height:1.6;min-height:100vh}
+.app{max-width:860px;margin:0 auto;padding:40px 24px 80px}
+.eyebrow{font-family:var(--font-mono);font-size:11px;color:var(--accent);letter-spacing:0.12em;text-transform:uppercase;margin-bottom:8px}
+h1{font-size:24px;font-weight:300;letter-spacing:-0.02em;margin-bottom:6px}
+.sub{font-size:13px;color:var(--text-muted);margin-bottom:32px}
+.paste-box{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px;margin-bottom:24px}
+.paste-label{font-family:var(--font-mono);font-size:11px;color:var(--accent);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px}
+.paste-box textarea{width:100%;background:transparent;border:none;outline:none;color:var(--text);font-family:var(--font-sans);font-size:13px;line-height:1.7;resize:none;min-height:120px}
+.paste-box textarea::placeholder{color:var(--text-dim)}
+.btn-primary{margin-top:12px;padding:10px 20px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-family:var(--font-sans);font-size:13px;font-weight:500;cursor:pointer}
+.btn-primary:disabled{opacity:0.4;cursor:not-allowed}
+.btn-success{padding:12px 32px;background:var(--success);color:#fff;border:none;border-radius:8px;font-family:var(--font-sans);font-size:14px;font-weight:500;cursor:pointer}
+.btn-success:disabled{opacity:0.4;cursor:not-allowed}
+.btn-ghost{padding:12px 20px;background:transparent;color:var(--text-muted);border:1px solid var(--border);border-radius:8px;font-family:var(--font-sans);font-size:13px;cursor:pointer}
+.status{font-family:var(--font-mono);font-size:11px;margin-top:8px;min-height:16px}
+.fields-wrap{background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:20px;display:none}
+.fields-wrap.show{display:block}
+.fields-head{padding:12px 16px;background:var(--surface2);border-bottom:1px solid var(--border);font-size:13px;font-weight:500}
+.frow{display:grid;grid-template-columns:200px 1fr;border-bottom:1px solid var(--border)}
+.frow:last-child{border-bottom:none}
+.frow-label{padding:10px 14px;border-right:1px solid var(--border);background:var(--surface2)}
+.frow-label b{font-size:12px;font-weight:500;display:block;margin-bottom:2px}
+.frow-label small{font-size:11px;color:var(--text-muted)}
+.frow-input{padding:8px 12px;background:var(--surface)}
+.frow-input textarea,.frow-input input{width:100%;background:transparent;border:none;outline:none;color:var(--text);font-family:var(--font-sans);font-size:13px;line-height:1.6;resize:none}
+.frow-input textarea::placeholder,.frow-input input::placeholder{color:var(--text-dim)}
+.actions{display:flex;align-items:center;gap:12px;display:none}
+.action-status{font-size:13px}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 0.7s linear infinite;vertical-align:middle;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="eyebrow">Disney Tech Recruiting</div>
+  <h1>Notes → Airtable</h1>
+  <p class="sub">Paste raw meeting notes → Claude extracts all fields with consistent formatting → one click saves to Airtable</p>
+
+  <div class="paste-box">
+    <div class="paste-label">⚡ Paste your raw notes</div>
+    <textarea id="rawNotes" placeholder="Paste anything — OneNote, bullet points, sentences, fragments.&#10;&#10;Example: Met with Ray Conn, DEET team. They build content platform for Disney+. Need senior Java engineers. Glendale CA or Bristol CT. Relo supported. P3 level mainly. Stack: Java, Python, AWS..."></textarea>
+    <button class="btn-primary" id="extractBtn" onclick="doExtract()">Extract fields</button>
+    <div class="status" id="extractStatus"></div>
+  </div>
+
+  <div class="fields-wrap" id="fieldsWrap">
+    <div class="fields-head">Review & edit — correct anything before saving</div>
+    <div id="fieldRows"></div>
+  </div>
+
+  <div class="actions" id="actions">
+    <button class="btn-success" id="pushBtn" onclick="doPush()">Save to Airtable</button>
+    <button class="btn-ghost" onclick="clearAll()">Clear</button>
+    <span class="action-status" id="actionStatus"></span>
+  </div>
+</div>
+
+<script>
+const WEBHOOK = "https://hooks.airtable.com/workflows/v1/genericWebhook/appw4P3ChwNcL2CQx/wflufWCtGeOJ8XB4r/wtrX84p16Am9IZp1t";
+
+const FIELDS = [
+  {id:"Team Name",hint:"Full team name"},
+  {id:"Director",hint:"Hiring leader"},
+  {id:"Org / Division",hint:"DEET, DXT, ENT…"},
+  {id:"Job Family",hint:"Backend, Data Engineering, ML/AI…"},
+  {id:"What They Build",hint:"Systems, products, platforms",long:true},
+  {id:"What This Team Enables",hint:"Business impact",long:true},
+  {id:"Core Systems Owned",hint:"Main services or pipelines",long:true},
+  {id:"FY 25/26 Projects",hint:"Top 2-3 priorities",long:true},
+  {id:"Build / Operate / Scale",hint:"What engineers mostly do"},
+  {id:"Org Structure",hint:"Managers and sub-teams",long:true},
+  {id:"Key Partner Teams",hint:"Who they work with most"},
+  {id:"Type of Roles",hint:"Titles and levels"},
+  {id:"Tech Stack",hint:"Languages, cloud, data — comma separated",long:true},
+  {id:"Levels Hiring",hint:"P2, P3, P4…"},
+  {id:"Ideal Candidate Profile",hint:"What makes someone successful",long:true},
+  {id:"Must-Have Skills",hint:"Non-negotiable — comma separated",long:true},
+  {id:"Nice to Have",hint:"Bonus — comma separated",long:true},
+  {id:"Not a Fit",hint:"Profiles that fail",long:true},
+  {id:"Future Skills",hint:"Skills growing — comma separated",long:true},
+  {id:"Location",hint:"City, ST — e.g. Glendale, CA"},
+  {id:"Relocation Support",hint:"Yes / No / Case by case"},
+  {id:"Status",hint:"Active Hiring / Frozen / Unknown"},
+  {id:"Additional Info",hint:"Notes, nuances, red flags",long:true},
+];
+
+const RULES = `CONSISTENCY RULES — no exceptions:
+SKILLS (Tech Stack, Must-Have Skills, Nice to Have, Future Skills):
+- Official names: "Spring Boot" not "Springboot", "AWS" not "Amazon Cloud"
+- Never parentheses — "AWS" and "ECS" are separate, never "AWS (ECS)"
+- Title Case: "Machine Learning" not "machine learning"
+- Comma-separated, one per entry
+
+LOCATION: Always "City, ST" — "Glendale, CA", "Bristol, CT", "New York, NY"
+Bristol = always "Bristol, CT". Multiple = semicolon: "Glendale, CA; Bristol, CT"
+
+LEVELS: P or M + number only — "P3" not "Senior SWE". Multiple: "P2, P3"`;
+
+let formData = {};
+
+(function buildRows(){
+  document.getElementById("fieldRows").innerHTML = FIELDS.map(f=>`
+    <div class="frow"><div class="frow-label"><b>${f.id}</b><small>${f.hint}</small></div>
+    <div class="frow-input">${f.long
+      ?`<textarea id="f_${f.id.replace(/\W/g,'_')}" rows="3" oninput="fd('${f.id.replace(/'/g,"\\'")}',this.value)"></textarea>`
+      :`<input type="text" id="f_${f.id.replace(/\W/g,'_')}" oninput="fd('${f.id.replace(/'/g,"\\'")}',this.value)">`
+    }</div></div>`).join("");
+})();
+
+function fd(k,v){formData[k]=v}
+
+async function doExtract(){
+  const notes=document.getElementById("rawNotes").value.trim();
+  if(!notes)return;
+  const btn=document.getElementById("extractBtn"),status=document.getElementById("extractStatus");
+  btn.disabled=true;btn.innerHTML='<span class="spinner"></span>Extracting…';status.textContent="";
+  try{
+    const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:2000,messages:[{role:"user",content:`Extract from meeting notes. Return ONLY valid JSON, no markdown.\n\n${RULES}\n\nNotes:\n${notes}\n\nFields (empty string if missing):\n${FIELDS.map(f=>`"${f.id}": "${f.hint}"`).join("\n")}`}]})});
+    const data=await res.json();
+    const parsed=JSON.parse(data.content.map(c=>c.text||"").join("").replace(/```json|```/g,"").trim());
+    formData={};
+    FIELDS.forEach(f=>{const v=parsed[f.id]||"";formData[f.id]=v;const el=document.getElementById("f_"+f.id.replace(/\W/g,"_"));if(el)el.value=v;});
+    document.getElementById("fieldsWrap").classList.add("show");
+    document.getElementById("actions").style.display="flex";
+    status.textContent="✓ Done — review and correct anything before saving";status.style.color="var(--success)";
+  }catch(e){status.textContent="Error: "+e.message;status.style.color="var(--danger)"}
+  btn.disabled=false;btn.textContent="Extract fields";
+}
+
+async function doPush(){
+  if(!formData["Team Name"]){alert("Team Name required");return}
+  const btn=document.getElementById("pushBtn"),status=document.getElementById("actionStatus");
+  btn.disabled=true;btn.innerHTML='<span class="spinner"></span>Saving…';status.textContent="";
+  const payload={};
+  FIELDS.forEach(f=>{if(formData[f.id])payload[f.id]=formData[f.id]});
+  try{
+    const res=await fetch(WEBHOOK,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+    if(!res.ok)throw new Error("Webhook failed — "+res.status);
+    status.textContent="✓ Saved to Airtable";status.style.color="var(--success)";
+    setTimeout(clearAll,2000);
+  }catch(e){status.textContent="✗ "+e.message;status.style.color="var(--danger)"}
+  btn.disabled=false;btn.textContent="Save to Airtable";
+}
+
+function clearAll(){
+  formData={};document.getElementById("rawNotes").value="";document.getElementById("extractStatus").textContent="";
+  FIELDS.forEach(f=>{const el=document.getElementById("f_"+f.id.replace(/\W/g,"_"));if(el)el.value=""});
+  document.getElementById("fieldsWrap").classList.remove("show");
+  document.getElementById("actions").style.display="none";
+  document.getElementById("actionStatus").textContent="";
+}
+</script>
+</body>
+</html>
